@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+
+	cli "github.com/NVIDIA/infra-controller-rest/cli/pkg"
 )
 
 // Command represents a registered interactive command.
@@ -171,6 +173,7 @@ func AllCommands() []Command {
 		{Name: "service-account current", Description: "Get current service account status", Run: cmdServiceAccountCurrent},
 
 		{Name: "login", Description: "Login / refresh auth token", Run: cmdLogin},
+		{Name: "env", Description: "Show NICO_* environment variables in use", Run: cmdEnv},
 		{Name: "help", Description: "Show available commands", Run: cmdHelp},
 	}
 }
@@ -3623,6 +3626,32 @@ func cmdLogin(s *Session, _ []string) error {
 	return nil
 }
 
+// cmdEnv prints every NICO_* environment variable currently set in the
+// process, the config field (or flag) it influences, and its value. Pass
+// "--mask" to redact sensitive values (tokens, secrets, passwords) for
+// safer display in shared screens.
+func cmdEnv(_ *Session, args []string) error {
+	mask := false
+	for _, a := range args {
+		if a == "--mask" || a == "-m" {
+			mask = true
+		}
+	}
+	overrides := cli.EnvOverridesFromEnvironment()
+	if len(overrides) == 0 {
+		fmt.Println(Dim("No NICO_* environment variables set."))
+		fmt.Println(Dim("Run 'help' for the full list of NICO_* variables nicocli understands."))
+		return nil
+	}
+	fmt.Printf("%s %d NICO_* variable(s) in use:\n", Bold("env:"), len(overrides))
+	fmt.Print(cli.FormatEnvOverrides(overrides, mask))
+	if !mask {
+		fmt.Printf("%s sensitive values shown in full; pass %s to redact.\n",
+			Dim("Tip:"), Bold("env --mask"))
+	}
+	return nil
+}
+
 func cmdHelp(_ *Session, _ []string) error {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(tw, "\nCOMMAND\tDESCRIPTION")
@@ -3644,6 +3673,21 @@ func cmdHelp(_ *Session, _ []string) error {
 	fmt.Fprintln(tw, "\t  label-capable lists: "+strings.Join(labelCapableListCommands, ", "))
 	fmt.Fprintln(tw, "exit\tExit interactive mode")
 	tw.Flush()
+
+	envTw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintf(envTw, "\n%s\tCONFIG FIELD / NOTES\n", Bold("ENV VAR"))
+	fmt.Fprintln(envTw, "-------\t--------------------")
+	for _, d := range cli.KnownEnvVarDescriptors() {
+		notes := d.ConfigPath
+		if d.Sensitive {
+			notes += " (sensitive)"
+		}
+		fmt.Fprintf(envTw, "%s\t%s\n", d.Name, notes)
+	}
+	fmt.Fprintln(envTw, "\t  Env vars override config file values; explicit flags still win.")
+	fmt.Fprintln(envTw, "\t  Run 'env' to see currently set values, 'env --mask' to redact sensitive ones.")
+	envTw.Flush()
+
 	fmt.Printf("\n%s\n", Bold("KEYBINDINGS"))
 	fmt.Println("  Ctrl+C    Clear current line")
 	fmt.Println("  Ctrl+D    Quit interactive mode")
